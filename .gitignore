@@ -1,0 +1,28 @@
+# ===== 密钥（绝不提交） =====
+data/ark-config.json
+
+# ===== 运行时日志 =====
+server.log
+*.log
+
+# ===== 个人存档（用户自己的歌词，非项目资产） =====
+data/song_*.json
+
+# ===== 构建输入（运行时用 public/pinyin.js，不需要原始字典） =====
+pinyin-raw.txt
+build-pinyin.js
+
+# ===== 依赖（零依赖项目，本就无 node_modules，保留以防万一） =====
+node_modules/
+
+# ===== 开发/校准脚本（非运行必需） =====
+*.cjs
+
+# ===== QA 产物 =====
+verify_report/
+verify-spec.json
+verify_*.md
+
+# ===== 内部笔记（非对外文档） =====
+COMPETITIVE-NOTES.md
+IMPROVEMENTS-from-skillhub.md
