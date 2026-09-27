@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>歌词工作室</title>
+  <link rel="icon" href="data:," />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="top">
+    <div class="brand">🎵</div>
+    <input id="meta-title" class="title" placeholder="未命名歌" />
+    <div class="top-right">
+      <span id="ai-status" class="dot unknown" title="AI 状态（点击设置）"></span>
+      <button id="btn-settings" class="icon" title="AI 设置（火山方舟 / Ollama）">⚙</button>
+    </div>
+  </header>
+
+  <div class="bar">
+    <button id="btn-add" class="primary sm">＋ 段落</button>
+    <label class="sel-inline">写词人<select id="ai-style"></select></label>
+    <label class="sel-inline">曲风<select id="ai-genre"><option value="">流行（默认）</option><option value="rap">说唱 / Rap</option><option value="folk">民谣</option><option value="ancient">古风</option><option value="rock">摇滚</option></select></label>
+    <label class="sel-inline">语种<select id="ai-lang"><option value="zh">中文</option><option value="en">英语</option><option value="ja">日语</option><option value="ko">韩语</option><option value="es">西班牙语</option><option value="bilingual">中英双语</option></select></label>
+    <label class="sel-inline">情绪<select id="ai-mood"><option value="">（自定义）</option><option>豪迈</option><option>忧伤</option><option>温柔</option><option>思念</option><option>坚定</option><option>欢快</option><option>孤寂</option><option>热血</option><option>励志</option></select></label>
+    <span class="spacer"></span>
+    <span id="stats" class="stats"></span>
+    <span id="save-flag" class="save-flag"></span>
+    <button id="btn-ai-song" class="primary sm">✦ 写整首</button>
+    <button id="btn-inspire" class="ghost sm">💡 灵感</button>
+    <button id="btn-req" class="ghost sm" title="填客户/委托方给的资料（故事、必留词、雷区、口气），自动带入每次生成">🎯 要求</button>
+    <button id="btn-save" class="ghost sm">保存</button>
+    <div class="more">
+      <button id="btn-more" class="ghost sm">⋯ 更多</button>
+      <div id="more-pop" class="more-pop hidden">
+        <label class="tgl"><input type="checkbox" id="tg-rhyme" checked /> 韵脚</label>
+        <label class="tgl"><input type="checkbox" id="tg-pingze" /> 平仄</label>
+        <label class="tgl"><input type="checkbox" id="tg-rhythm" /> 节奏</label>
+        <label class="tgl"><input type="checkbox" id="tg-melody" /> 旋律</label>
+        <label class="sel-inline">演唱<select id="ai-singer"></select></label>
+        <button id="btn-lexicon" class="ghost sm">📚 词库</button>
+        <button id="btn-info" class="ghost sm">信息</button>
+        <button id="btn-new" class="ghost sm">新建</button>
+        <button id="btn-load" class="ghost sm">存档</button>
+        <button id="btn-export" class="ghost sm">导出</button>
+        <button id="btn-suno" class="ghost sm">导出 Suno</button>
+        <button id="btn-copyright" class="ghost sm">📜 版权存证</button>
+        <button id="btn-popmetric" class="ghost sm">📊 流行实测</button>
+      </div>
+    </div>
+  </div>
+
+  <section id="inspire" class="inspire hidden">
+    <div class="inspire-head">
+      <span class="inspire-title">💡 灵感库</span>
+      <span class="inspire-acts">
+        <button id="inspire-refresh" class="ghost sm">🔄 换一批</button>
+        <button id="inspire-close" class="ghost sm">收起</button>
+      </span>
+    </div>
+    <div class="inspire-tabs">
+      <button class="insp-tab active" data-tab="themes">主题灵感</button>
+      <button class="insp-tab" data-tab="structs">句式骨架</button>
+      <button class="insp-tab" data-tab="favs">我的收藏</button>
+    </div>
+    <div id="inspire-status" class="inspire-status"></div>
+    <div id="inspire-list" class="inspire-list"></div>
+  </section>
+
+  <div id="mood-rhyme" class="mood-rhyme"></div>
+
+  <div id="arc" class="arc" aria-label="情感弧线"></div>
+
+  <main id="blocks" class="blocks"></main>
+
+  <!-- 通用弹窗（存档列表 / 逐句 AI） -->
+  <div id="modal" class="modal hidden">
+    <div class="modal-box">
+      <div class="modal-head">
+        <span id="modal-title">提示</span>
+        <button id="modal-close">✕</button>
+      </div>
+      <div id="modal-body" class="modal-body"></div>
+    </div>
+  </div>
+
+  <!-- 歌曲信息弹窗 -->
+  <div id="info-modal" class="modal hidden">
+    <div class="modal-box">
+      <div class="modal-head">
+        <span>歌曲信息</span>
+        <button id="info-close">✕</button>
+      </div>
+      <div class="modal-body">
+        <label class="fld">作者<input id="meta-author" placeholder="作词人" /></label>
+        <label class="fld">调式<input id="meta-key" placeholder="如 1=G" /></label>
+        <label class="fld">速度 (BPM)<input id="meta-bpm" placeholder="如 92" /></label>
+        <label class="fld">拍号<input id="meta-meter" placeholder="如 4/4" /></label>
+        <label class="fld">曲风<small>用于 Suno 的 Style 框，如 Mandopop / 国风 / R&B</small><input id="meta-genre" placeholder="如 Mandopop" /></label>
+        <label class="fld">情绪<small>如 伤感 / 励志 / 慵懒 / 暗恋</small><input id="meta-mood" placeholder="如 伤感" /></label>
+        <div class="fld-divider"><span>演唱者</span><small>歌词要适配 TA 的声音</small></div>
+        <label class="fld">歌手 / 演唱者<input id="singer-name" placeholder="如 周杰伦" /></label>
+        <label class="fld">性别
+          <select id="singer-gender">
+            <option value="">不限</option>
+            <option>男声</option>
+            <option>女声</option>
+            <option>组合</option>
+            <option>合唱</option>
+          </select>
+        </label>
+        <label class="fld">声部 / 音域
+          <select id="singer-register">
+            <option value="">不限</option>
+            <option>高音</option>
+            <option>中音</option>
+            <option>低音</option>
+          </select>
+        </label>
+        <label class="fld">音色 / 风格标签<input id="singer-timbre" placeholder="如 清亮 / 沙哑 / 甜美 / rap" /></label>
+        <button id="btn-custom-lyricist" class="ghost sm" style="margin-top:8px">➕ 自定义词人 / AI 现场蒸馏</button>
+        <p class="hint">工具条「演唱」里直接选具体歌手（如 周杰伦、王菲）即可一键填好声音条件；也可在这里自由改写或填自定义歌手。AI 写词时会据此调整音节、母音开口度与音域难度，让词更适合 TA 唱。</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- AI 设置弹窗 -->
+  <div id="settings-modal" class="modal hidden">
+    <div class="modal-box">
+      <div class="modal-head">
+        <span>AI 设置（提供方）</span>
+        <button id="settings-close">✕</button>
+      </div>
+      <div class="modal-body">
+        <label class="set-row">提供方
+          <select id="set-provider">
+            <option value="ark">火山方舟（Volcengine Ark）</option>
+            <option value="ollama">本机 Ollama</option>
+          </select>
+        </label>
+        <div id="set-ark-fields">
+          <p class="set-tip">Coding Plan 用户请注意：Base URL 必须填 <code>https://ark.cn-beijing.volces.com/api/coding/v3</code>，模型推荐 <code>ark-code-latest</code>（自动调度）或 <code>Doubao-Seed-2.1-turbo</code>；用普通端点或 doubao-seed-2-1-pro-260628 会报“未激活模型”。</p>
+          <label class="set-row">火山 API Key
+            <input id="set-ark-key" type="password" placeholder="在火山控制台创建的 ARK_API_KEY" autocomplete="off" />
+          </label>
+          <label class="set-row">模型 / 接入点 ID
+            <input id="set-ark-model" placeholder="Coding Plan 推荐 ark-code-latest 或 Doubao-Seed-2.1-turbo" />
+          </label>
+          <label class="set-row">Base URL
+            <input id="set-ark-base" placeholder="https://ark.cn-beijing.volces.com/api/coding/v3" />
+          </label>
+        </div>
+        <div id="set-ollama-fields">
+          <label class="set-row">Ollama 地址
+            <input id="set-ollama-base" placeholder="http://127.0.0.1:11434" />
+          </label>
+        </div>
+        <div class="set-actions">
+          <button id="set-save" class="primary">保存</button>
+          <button id="set-cancel">取消</button>
+          <span id="set-msg" class="set-msg"></span>
+        </div>
+        <p class="set-hint">API Key 仅保存在本机服务（data/ark-config.json），不上传、不出现在浏览器里。也可用环境变量 ARK_API_KEY 注入。</p>
+      </div>
+    </div>
+  </div>
+
+
+  <!-- 流行实测器：粘贴真实热歌歌词，文本指标引擎算出句长/韵密度/句尾四声分布，累积后可校准节奏·旋律规则 -->
+  <div id="popmetric-modal" class="modal hidden">
+    <div class="modal-box popmetric-box">
+      <div class="modal-head">
+        <span id="popmetric-title">📊 流行实测 · 用真实热歌校准写歌规则</span>
+        <button id="popmetric-close">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="pm-hint">粘贴歌词（每行一句），选曲风，点「分析」即得文本指标。多次「记入累积」后看跨样本分布。
+          <b>边界：</b>纯文本只能测 句长/字密度/韵密度/断句率/句尾四声；BPM·切分·倒字率·音域 属音频特征，需文献支撑（见 rules.json.popEvidence）。</p>
+        <div class="pm-row">
+          <label class="sel-inline">曲风<select id="popmetric-genre"><option value="">流行（默认）</option><option value="rap">说唱 / Rap</option><option value="folk">民谣</option><option value="ancient">古风</option><option value="rock">摇滚</option></select></label>
+          <label class="fld sm">来源/歌名<input id="popmetric-source" placeholder="如 《xxx》/榜单" /></label>
+          <button id="popmetric-sample" class="ghost sm">📋 示例</button>
+        </div>
+        <textarea id="popmetric-input" class="pm-input" placeholder="把热歌歌词粘这里，每行一句…"></textarea>
+        <div class="pm-actions">
+          <button id="popmetric-run" class="primary sm">分析</button>
+          <button id="popmetric-clear" class="ghost sm">清空累积</button>
+        </div>
+        <div id="popmetric-result" class="pm-result"></div>
+        <div class="pm-dash-title">累积仪表盘（localStorage · lyric-studio:popmetrics）</div>
+        <div id="popmetric-dash" class="pm-dash"></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="pinyin-data.js"></script>
+  <script src="pinyin.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
