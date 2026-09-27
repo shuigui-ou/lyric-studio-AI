@@ -65,3 +65,24 @@ RULES.md                 创作规则人读版
 ## 灵感池数据源说明
 
 实时榜走聚合接口 `api.injahow.cn`（Meting），采集失败时降级到本地静态池 `public/data/hot-themes.json`，面板不会空。
+
+采集与切分是两条独立链路：`collectCharts()` 只做抓取与签名（便宜），`sliceDistill()` 才烧 token。仅当签名变化（有榜上新歌）才触发切分。冷启动不阻塞——首次打开面板时 `/api/charts` 立即返回 `running:true, collecting:true`，后台悄悄采，采完再落池，你不会看到"转圈十几分钟"。
+
+## 行为约定（改测试或二次开发前必读）
+
+以下都是**产品设计时就定下的行为**，UI 上不会说，但写自动化回归或改代码时极易当成 bug：
+
+- **toast 不是完成信号。** AI 生成期间的忙碌指示走 toast，它几秒内就消失。**判定"生成完了"必须看结果容器**（例如蒸馏弹窗里 `#cl-profile` 的 value 非空），不能用 toast 还在不在判断。
+- **保存成功后弹窗按设计自动关闭。** 不是 bug。想断言"弹窗里的内容"，必须在点「保存/应用」**之前**断言；点完之后再查必然已关。
+- **全量自动收藏开启时，灵感「主题」抽卡池按设计为空。** 打开面板时 `ensureAutoFavs()` 会把当前池子全量收进收藏区；而抽卡候选严格排除一切已收藏项——**全量收藏后 themes 抽不出牌，是数学必然，不是故障**。逃生口是灵感面板上的「自动收藏」总开关（存 `localStorage['lyric-studio:autoFavOn']`）。关掉之后：手动 ★ 收藏的条目永久不参与轮替，但"自动收进来"的条目会**重新回到抽卡池**。
+- **重启服务会清空内存态蒸馏池。** `/api/charts` 的 items 是进程内缓存，重启即归零，后台需重跑一轮采集与蒸馏才恢复（实测 6–11 分钟）。期间接口秒回但 items 为空——这是"正在后台采"，不是"接口挂了"。
+- **AI 输出是分钟级，不是秒级。** 单句续写通常 20s 内；写整首 60–90s；AI 现场蒸馏 18–30s。客户端超时已按此量级设定，断言不要用秒回预期。
+
+写自动化回归直接复用仓库里的 `verify-spec.json`（31 条 UI 用例）与 `verify_edge.cjs`（6 条服务端边界探针）：
+
+```bash
+node verify_edge.cjs                 # 服务端边界：413 / 中文 id / 路径穿越 / 蒸馏池字段齐备
+node verify.cjs --spec verify-spec.json --url http://localhost:3100 --ui-only --allow-api
+```
+
+`verify.cjs` 来自 [software-verifier](https://github.com/shuigui-ou/software-verifier) 技能，把它的 `verify.cjs` / `engine.cjs` / `drivers/` 放进工作目录即可，无需安装。
