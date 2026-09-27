@@ -1,0 +1,12 @@
+{
+  "name": "lyric-studio",
+  "version": "1.0.0",
+  "description": "本地写歌词软件：结构块编辑 + 中文押韵/平仄辅助 + 自动保存 + Ollama AI 续写",
+  "private": true,
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
