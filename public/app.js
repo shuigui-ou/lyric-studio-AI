@@ -1054,8 +1054,8 @@
       const themePart = theme ? `主题 / 情绪：「${theme}」。` : '请自行设定一个完整统一的主题与情绪。';
       const singerPart = singer ? `请适配演唱者「${singer}」的音色与音域，便于人声自然演唱。` : '';
       const allLocked = [];
-      state.blocks.forEach((b) => b.lines.forEach((l) => { if (l.locked && (l.text || '').trim()) allLocked.push(l.text.trim()); }));
-      const pinnedPart = allLocked.length ? `请尽量保留以下已锁定金句（原样出现，可放在合适段落）：${allLocked.join('｜')}。` : '';
+      state.blocks.forEach((b) => b.lines.forEach((l) => { if (l.locked && (l.text || '').trim()) allLocked.push({ text: l.text.trim(), type: b.type || 'verse' }); }));
+      const pinnedPart = allLocked.length ? `以下 ${allLocked.length} 句是已锁定金句，必须一字不改地出现在歌词中（放在合适段落）：${allLocked.map((o) => o.text).join('｜')}。` : '';
       const langName = LANGS[currentLang()] || '华语';
       const genreName = currentGenre() ? '（' + (GENRES[currentGenre()] || '流行') + '）' : '';
       const briefPart = briefHint() ? briefHint() + '。' : '';
@@ -1064,7 +1064,7 @@
       if (state.blocks.some((b) => b.lines.some((l) => (l.text || '').trim()))) {
         if (!window.confirm('当前已有歌词，是否覆盖生成整首新歌？（取消则保留现有内容）')) return;
       }
-      CURRENT_PINNED = allLocked;
+      CURRENT_PINNED = allLocked.map((o) => o.text);
       bGo.disabled = true; bGo.textContent = '生成中…';
       toast('AI 正在写整首歌…');
       try {
@@ -1075,10 +1075,18 @@
         const j = await r.json();
         if (j.ok && j.text) {
           const blocks = parseSong(j.text);
+          // 兜底：与整段重写路径一致——AI 万一漏掉锁定金句，按原段落性质强制插回（放该段倒数第二行位置）。
+          // 金句保留优先于行数奇偶约束，缺几句补几句。
+          const missing = allLocked.filter((o) => !blocks.some((bl) => bl.lines.some((ln) => (ln.text || '').includes(o.text))));
+          for (const o of missing) {
+            const tb = blocks.find((bl) => bl.type === o.type) || blocks.find((bl) => bl.lines.length >= 2) || blocks[0];
+            if (!tb) break;
+            tb.lines.splice(Math.max(0, tb.lines.length - 1), 0, { text: o.text, note: '' });
+          }
           state.blocks = blocks;
           renderAll(); scheduleSave();
           $('#modal').classList.add('hidden');
-          toast('AI 已生成整首歌（' + blocks.length + ' 段）', 'ok');
+          toast('AI 已生成整首歌（' + blocks.length + ' 段）' + (missing.length ? '，已强制保留锁定金句 ' + missing.length + ' 句' : ''), 'ok');
         } else toast(j.message || 'AI 生成失败', 'err');
       } catch (e) { toast('AI 请求失败：' + e.message, 'err'); }
       finally { CURRENT_PINNED = []; bGo.disabled = false; bGo.textContent = '生成整首'; }
@@ -1106,14 +1114,20 @@
     return parts.length ? parts.join(' ') + '。' : '';
   }
   function hasBrief() { const b = briefOf(); return !!(b.story || b.traits || b.must || b.avoid || b.tone); }
+  // 必留词堆到一定条数，AI 会把它们当成一串任务点、退化成「只写几句」，
+  // 同时 prompt 变长、生成耗时暴涨。到阈值就在按钮上直接报警，让用户知道该先「清空」。
+  const MUST_WARN_AT = 6;
   function syncReqBadge() {
     const btn = $('#btn-req'); if (!btn) return;
-    btn.classList.toggle('on', hasBrief());
+    const has = hasBrief();
+    btn.classList.toggle('on', has);
     const n = briefLines(briefOf().must).length;
-    btn.textContent = hasBrief() ? '🎯 要求' + (n ? '·' + n : '') : '🎯 要求';
-    btn.title = hasBrief()
-      ? '已填委托要求（' + (n ? n + ' 个必留词，' : '') + 'AI 生成会自动带上）'
+    const warn = has && n >= MUST_WARN_AT;
+    btn.textContent = has ? (warn ? '🎯 要求⚠' + n : '🎯 要求' + (n ? '·' + n : '')) : '🎯 要求';
+    btn.title = has
+      ? '已填委托要求（' + (n ? n + ' 个必留词' + (warn ? '——过多，AI 可能只生成少量歌词且耗时变长，建议先清空' : '') + '，' : '') + 'AI 生成会自动带上）'
       : '填写客户给的资料（故事 / 必留词 / 雷区 / 口气），自动带入每次生成';
+    btn.classList.toggle('warn', !!warn);
   }
 
   // ---------- 要求模板（从灵感提取 / 自己存）存 localStorage，可一键套用 ----------
@@ -1549,14 +1563,21 @@
   // 「已收藏」只当排除表用，永远不会作为补位池被抽到；凑不满就少给，抽空就空着。
   const INSP_DECKS = {}; // tab -> 打乱后待发队列（pop 取用）
   const INSP_SEEN = {};  // tab -> 已发过的 key 集合
-  // 当前还能抽的牌（不含任何已收藏 / 已取消 / 本轮已发的）
+  // 当前还能抽的牌（不含：手动收藏 / 手动取消过 / 本轮已发的）。
+  // 关键：自动收录项（auto:true）只在「自动收藏」总开关开启时才挡住抽卡；
+  // 关掉总开关后，它们仍留在「我的收藏」里，但可被换一批重新抽到 —— 这样切开关不会让条目凭空消失。
   function availPool(pool, kind) {
-    const favKeys = new Set(loadFavs().map((f) => itemKey(f.kind, f.item)));
+    const favs = loadFavs();
+    const autoFavOn = loadAutoFavOn();
     const offSet = new Set(loadAutoFavOff());
     const seen = INSP_SEEN[kind] || new Set();
     return shuffleArr(pool).filter((it) => {
       const k = itemKey(kind, it);
-      return !favKeys.has(k) && !offSet.has(k) && !seen.has(k);
+      if (offSet.has(k) || seen.has(k)) return false;
+      const fav = favs.find((f) => itemKey(f.kind, f.item) === k);
+      // 手动收藏（auto:false/undefined）永远挡住抽卡；自动收录项仅当总开关开时挡住
+      if (fav && !(fav.auto && !autoFavOn)) return false;
+      return true;
     });
   }
   function pickN(pool, n) {
@@ -1686,7 +1707,7 @@
       currentPool = loadFavs(); // 每项 {kind, item}，主题灵感已全部自动收录
       list.classList.add('scroll-y');
       const autoN = currentPool.filter((f) => f.auto).length;
-      const note = '<div class="inspire-note">📌 灵感库里的主题已全部自动收录到这里（' + autoN + ' 条），不需要手动点 ★。手动取消过的不会再自动加回；抽卡时这里的东西一律不再出现，也不参与任何轮替。</div>';
+      const note = '<div class="inspire-note">📌 灵感库里的主题已全部自动收录到这里（' + autoN + ' 条），不需要手动点 ★。手动取消过的不会再自动加回；其中「手动收藏」永远不参与换一批，而「自动收录」项仅在「自动收藏」开关开启时不参与换一批（关掉开关后它们会被换一批抽到，但始终留在这里）。</div>';
       if (!currentPool.length) { list.innerHTML = note + '<div class="empty">暂无收藏。主题灵感会自动收录在这里，也可在「句式骨架」手动 ★。</div>'; return; }
       list.innerHTML = note + currentPool.map((e, i) => cardHtml(e.kind, e.item, i)).join('');
     } else {
@@ -1707,10 +1728,9 @@
           + (on ? '↩ 关闭自动收藏，恢复换一批' : '↪ 重新开启自动收藏') + '</button></div>';
         const ua = $('#unfav-all');
         if (ua) ua.addEventListener('click', () => {
-          saveAutoFavOn(!loadAutoFavOn());   // 用总开关兜住，否则渲染时 ensureAutoFavs 会立刻把收藏加回来
-          const favs = loadFavs().filter((f) => !f.auto);
-          saveFavs(favs);
-          saveAutoFavOff([]);
+          // 只切「自动收藏」总开关：不再硬删 auto 条目（旧逻辑 filter(!f.auto) 会在关→开之间把条目永久丢失）。
+          // 开关关闭时，availPool 不再把 auto 条目当排除项，换一批即可抽到；开启时它们照旧挡住抽卡但始终留在收藏区。
+          saveAutoFavOn(!loadAutoFavOn());
           INSP_SEEN.themes = new Set();
           INSP_DECKS.themes = null;
           renderInspire();
@@ -1817,7 +1837,10 @@
     if (rec.theme) parts.push('主题：' + rec.theme);
     if (added > 0) parts.push('已带入 ' + added + ' 条特质 / 必留 / 雷区');
     else parts.push('要求无新增（内容已存在）');
-    toast('已应用灵感：' + parts.join(' · '), 'ok');
+    // 应用灵感是「追加」语义，连着用几条就会层层堆积，必须让用户看见总量
+    const total = briefLines(next.must).length;
+    if (total >= MUST_WARN_AT) parts.push('⚠ 必留词已累计 ' + total + ' 条，建议先「清空」再生成');
+    toast('已应用灵感：' + parts.join(' · '), total >= MUST_WARN_AT ? 'err' : 'ok');
   }
   // 套用句式：把成品例句填入当前聚焦的那一行（先点正文某行），无聚焦则填入首个空行；不覆盖有内容的行以外之处
   function applyStruct(item) {
