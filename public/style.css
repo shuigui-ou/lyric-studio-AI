@@ -62,6 +62,10 @@ body {
 #btn-req.on {
   background: var(--accent-soft); border-color: var(--accent); color: var(--accent); font-weight: 600;
 }
+/* 🎯 委托要求：必留词堆到阈值以上，歌词有被压缩成「只写几句」的风险，用告警色提醒去清空 */
+#btn-req.warn {
+  background: #fff4e5; border-color: #e8a33d; color: #a86400; font-weight: 700;
+}
 /* 「🎯 要求」模板行 */
 .req-tpl { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 2px 0 10px; }
 .req-tpl select, .req-tpl input {
