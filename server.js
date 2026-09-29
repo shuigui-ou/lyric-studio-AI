@@ -76,13 +76,23 @@ function sendJSON(res, code, obj) {
   res.end(body);
 }
 
-function readBody(req) {
+function readBody(req, res) {
   return new Promise((resolve, reject) => {
     let data = '';
     let size = 0;
     req.on('data', (c) => {
       size += c.length;
-      if (size > 5 * 1024 * 1024) { req.destroy(); reject(Object.assign(new Error('body too large'), { statusCode: 413 })); return; }
+      // 超限必须先把 413 真正写出去：早先用 req.destroy() 硬掐连接，客户端只拿到
+      // "fetch failed" 的 network error，无法区分「请求体过大」与「服务已崩溃」。
+      if (size > 5 * 1024 * 1024) {
+        req.removeAllListeners('data');
+        if (res && !res.headersSent) {
+          try { res.writeHead(413, { 'Content-Type': 'application/json; charset=utf-8' }); res.end(JSON.stringify({ ok: false, message: '请求体过大（>5MB）' })); }
+          catch { /* 写失败也不阻塞 reject */ }
+        }
+        reject(Object.assign(new Error('body too large'), { statusCode: 413 }));
+        return;
+      }
       data += c;
     });
     req.on('end', () => resolve(data));
@@ -126,10 +136,19 @@ async function ollamaAvailable(base) {
 // 而非正文 content。实测 max_tokens=1500 时 reasoning 吃掉 ~1500-2700 token，正文预算为 0，
 // finish_reason="length" → content 为空 → 前端不写歌词。因此必须把 max_tokens 提到足够大（8192），
 // 给推理 + 正文留出余量；并相应放宽超时（180s）。正文一律只读 content，绝不用推理链当歌词。
+// 注意：Node 内置 fetch 走 undici，其默认 bodyTimeout/headersTimeout 是 300_000ms。
+// 当这里设的超时也接近 300s 时，undici 会抢在 AbortController 之前掐断连接，
+// 抛出的异常是含糊的 TypeError: fetch failed，而不是 AbortError——
+// 于是「超时重试」与「超时友好文案」两个分支都进不去，用户看到一句看不懂的报错。
+// 约束：单次调用上限压到 285s，让我们的 abort 永远先于 undici 生效。
+const ARK_TIMEOUT_CEILING = 285000;
+
 async function arkCallOnce(prompt, model, cfg, sys, timeoutMs) {
-  const TIMEOUT = timeoutMs || 180000;
+  const TIMEOUT = Math.min(timeoutMs || 180000, ARK_TIMEOUT_CEILING);
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), TIMEOUT);
+  const _t0 = Date.now();
+  const _sz = 'promptLen=' + String(prompt || '').length + ' sysLen=' + String(sys || '').length + ' timeout=' + TIMEOUT;
   let r;
   try {
     r = await fetch(`${cfg.arkBase}/chat/completions`, {
@@ -145,9 +164,23 @@ async function arkCallOnce(prompt, model, cfg, sys, timeoutMs) {
     });
   } catch (e) {
     clearTimeout(timer);
-    return { ok: false, code: 'ark_network', message: '调用火山方舟失败：' + e.message };
+    // 日志只记规模与耗时，绝不打印 prompt 内容与 API Key
+    console.log('[ark] 失败 ' + model + ' ' + _sz + ' ms=' + (Date.now() - _t0) + ' ' + e.name);
+    // 超时（AbortError）与真网络错误要分开文案：前者是「生成较慢」，用户看得懂才知道下一步做什么，
+    // 直接把 "This operation was aborted" 抛给用户毫无意义。
+    const timedOut = e.name === 'AbortError' || /abort/i.test(e.message || '');
+    if (timedOut) {
+      return { ok: false, code: 'ark_timeout',
+        message: 'AI 生成较慢，超出了 ' + Math.round(TIMEOUT / 1000) + ' 秒的限制，本次未出结果。请再试一次；若反复失败，可点右上角「⚙ 设置」切换到 Ollama 本地模型。' };
+    }
+    // "fetch failed" 多半是 undici 在 300s 处掐断（见 ARK_TIMEOUT_CEILING），这里给能看懂的说法
+    const isFetchFail = /fetch failed/i.test(e.message || '');
+    return { ok: false, code: 'ark_network',
+      message: isFetchFail ? '与火山方舟的连接中断（可能耗时过长）。请再试一次；若反复失败，可点右上角「⚙ 设置」切换到 Ollama 本地模型。'
+                           : '调用火山方舟失败：' + e.message };
   }
   clearTimeout(timer);
+  console.log('[ark] 返回 ' + model + ' ' + _sz + ' ms=' + (Date.now() - _t0));
   if (!r.ok) {
     let detail = `火山方舟返回 ${r.status}`;
     try { const ej = await r.json(); if (ej && ej.error && ej.error.message) detail = ej.error.message; } catch {}
@@ -166,12 +199,32 @@ async function arkCallOnce(prompt, model, cfg, sys, timeoutMs) {
 const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
 
 // 偶发空内容自动重试（最多 3 次，指数退避 0.7s / 1.4s）。鉴权/模型/网络错误不重试，直接上抛。
-async function arkSuggest(prompt, model, cfg, sys) {
+async function arkSuggest(prompt, model, cfg, sys, timeoutMs) {
   const MAX_ATTEMPTS = 3;
   let last = null;
+  // 超时与空内容是两种不同成因：空内容重试有意义（推理模型偶发吐不出正文）；
+  // 超时则是 Ark 侧长尾慢响应，重试也能救回一部分（实测同样 prompt 有时 89s 出、有时超时）。
+  // 但整轮只给一次重试机会，且第二次用「短预算」——若第一次已等满 300s，第二次再等满 300s
+  // 意味着用户干等 10 分钟；短预算既能快速判死，也保留了"刚好赶上"的救援窗口。
+  let retriedTimeout = false;
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-    const res = await arkCallOnce(prompt, model, cfg, sys);
+    const res = await arkCallOnce(prompt, model, cfg, sys, timeoutMs);
     if (res.ok) return res;
+    if (res.code === 'ark_timeout' && !retriedTimeout) {
+      retriedTimeout = true;
+      const t2 = Math.min(60000, Math.max(30000, Math.round((timeoutMs || 180000) * 0.3)));
+      console.log('[ark] 首次超时，短预算重试一次（' + t2 + 'ms）');
+      const res2 = await arkCallOnce(prompt, model, cfg, sys, t2);
+      if (res2.ok) return res2;
+      // 第二次若是超时，直接把两次的结果一并告知用户，不落到空内容重试里空转
+      if (res2.code === 'ark_timeout') {
+        return { ok: false, code: 'ark_timeout',
+          message: 'AI 生成较慢，两次尝试（' + Math.round((timeoutMs || 180000) / 1000) + 's + ' + Math.round(t2 / 1000) + 's）都没出结果。请再试一次；若反复失败，可点右上角「⚙ 设置」切换到 Ollama 本地模型。' };
+      }
+      if (res2.code !== 'ark_empty') return res2;
+      last = res2;
+      continue;
+    }
     if (res.code !== 'ark_empty') return res; // 非"空内容"错误不重试
     last = res;
     if (attempt < MAX_ATTEMPTS) await sleep(700 * attempt);
@@ -193,7 +246,11 @@ async function handleAiSuggest(body) {
         message: '未配置火山方舟 API Key。请点右上角「⚙ 设置」填入（或在服务端设置环境变量 ARK_API_KEY）。' };
     }
     const useModel = model || cfg.arkModel || ARK_MODEL_DEFAULT;
-    return await arkSuggest(prompt, useModel, cfg, sys);
+    // 超时按 mode 区分：「写整首」要输出完整多段歌词，且推理模型的思维链本身很长，
+    // 实测常在 150-200s 之间、越过默认的 180s 后 abort（表现：ok:false + "This operation was aborted"）。
+    // 另两条耗时长的路径（蒸馏 / 命名）已经各自传了 300000，写词路径此前漏了。
+    const arkTimeout = mode === 'song' ? 300000 : 180000;
+    return await arkSuggest(prompt, useModel, cfg, sys, arkTimeout);
   }
 
   // Ollama
@@ -452,14 +509,25 @@ function buildPrompt(context, instruction, style, singer, sectionType, mode, pin
     const pick = (v) => String(v == null ? '' : v).trim();
     const briefLines = (v) => String(v == null ? '' : v).split(/\n/).map((s) => s.trim()).filter(Boolean);
     const story = pick(brief.story), must = pick(brief.must), avoid = pick(brief.avoid), tone = pick(brief.tone), traits = pick(brief.traits);
-    const musts = must ? must.split(/[\n，,、;；]/).map((s) => s.trim()).filter(Boolean) : [];
+    // 必留词堆太多时，模型会把它们当成一串待办任务，退化成「挑几个词各写一句」——
+    // 表现为整首只出这么几句。超过上限只取前几条并如实告知省略数，同时在约束里点明
+    // 「分散到不同段落、写满全部段落」，把这个退化路径堵回去。
+    const MUST_CAP = 6;
+    let musts = must ? must.split(/[\n，,、;；]/).map((s) => s.trim()).filter(Boolean) : [];
+    let mustDropped = 0;
+    if (musts.length > MUST_CAP) { mustDropped = musts.length - MUST_CAP; musts = musts.slice(0, MUST_CAP); }
     const avoids = avoid ? avoid.split(/[\n，,、;；]/).map((s) => s.trim()).filter(Boolean) : [];
     const traitList = briefLines(traits);
     if (story || traitList.length || musts.length || avoids.length || tone) {
       let blk = '\n\n【委托要求（客户/委托方给的原始资料，必须全部满足）】';
       if (story) blk += `\n故事与主题要点：${story}`;
       if (traitList.length) blk += `\n必须用到的笔法特质（照此手法写，不是堆意象）：${traitList.join('；')}`;
-      if (musts.length) blk += `\n必须原样出现的词句（一条都不能少，放在自然的位置上）：${musts.join('；')}`;
+      if (musts.length) {
+        blk += `\n必须原样出现的词句（一条都不能少，放在自然的位置上）：${musts.join('；')}`;
+        if (mustDropped) blk += `\n（另有 ${mustDropped} 条因过多已省略，本次不必强求）`;
+        // 关键防退化：明确「分散 + 写满段落」，否则模型会挤成一两句把必留词交代完
+        blk += '\n注意：上面这些词要分散到整首歌的不同段落里自然写出，不是每个词单独占一句、也不是只挑一两句交代完；输出必须写满前面给出的全部段落。';
+      }
       if (avoids.length) blk += `\n坚决不写（客户明确排除的内容，出现即不合格）：${avoids.join('；')}`;
       if (tone) blk += `\n口气 / 人称 / 其他要求：${tone}`;
       blk += '\n以上为硬性约束，优先级高于你的创作习惯与词人风格；若与词人风格冲突，以本要求为准。';
@@ -921,7 +989,7 @@ const server = http.createServer(async (req, res) => {
       });
     }
     if (p === '/api/settings' && req.method === 'POST') {
-      const raw = await readBody(req);
+      const raw = await readBody(req, res);
       let body; try { body = JSON.parse(raw); } catch { return sendJSON(res, 400, { ok: false, message: 'JSON 解析失败' }); }
       let file = {};
       try { file = JSON.parse(fs.readFileSync(ARK_CONFIG_FILE, 'utf8')); } catch {}
@@ -934,7 +1002,7 @@ const server = http.createServer(async (req, res) => {
       return sendJSON(res, 200, { ok: true, arkConfigured: !!file.arkApiKey, provider: file.provider });
     }
     if (p === '/api/ai/suggest' && req.method === 'POST') {
-      const raw = await readBody(req);
+      const raw = await readBody(req, res);
       let body; try { body = JSON.parse(raw); } catch { return sendJSON(res, 400, { ok: false, message: 'JSON 解析失败' }); }
       const out = await handleAiSuggest(body);
       return sendJSON(res, out.ok ? 200 : 200, out); // 前端按 ok 字段判断
@@ -975,7 +1043,7 @@ const server = http.createServer(async (req, res) => {
       return sendJSON(res, 200, { ok: true });
     }
     if (p === '/api/songs' && req.method === 'POST') {
-      const raw = await readBody(req);
+      const raw = await readBody(req, res);
       let body; try { body = JSON.parse(raw); } catch { return sendJSON(res, 400, { ok: false, message: 'JSON 解析失败' }); }
       const id = safeId(body.id) || ('song_' + Date.now());
       const fp = path.join(DATA, id + '.json');
@@ -991,7 +1059,7 @@ const server = http.createServer(async (req, res) => {
       return sendJSON(res, 200, loadJSON(path.join(DATA, 'lexicon.json'), {}));
     }
     if (p === '/api/lyricists' && req.method === 'POST') {
-      const raw = await readBody(req);
+      const raw = await readBody(req, res);
       let body; try { body = JSON.parse(raw); } catch { return sendJSON(res, 400, { ok: false, message: 'JSON 解析失败' }); }
       const name = (body.name || '').trim();
       if (!name) return sendJSON(res, 400, { ok: false, message: '词人名不能为空' });
@@ -1011,7 +1079,7 @@ const server = http.createServer(async (req, res) => {
       return sendJSON(res, 200, { ok: true, name, lyricists: Object.keys(LYRICISTS).map((n) => ({ name: n })) });
     }
     if (p === '/api/ai/distill' && req.method === 'POST') {
-      const raw = await readBody(req);
+      const raw = await readBody(req, res);
       let body; try { body = JSON.parse(raw); } catch { return sendJSON(res, 400, { ok: false, message: 'JSON 解析失败' }); }
       const name = (body.name || '').trim();
       if (!name) return sendJSON(res, 400, { ok: false, message: '词人名不能为空' });
@@ -1059,6 +1127,8 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(200, { 'Content-Type': MIME[ext] || 'application/octet-stream' });
     fs.createReadStream(fp).pipe(res);
   } catch (e) {
+    // readBody 可能已直接写出 413 响应，此处若再写一次会触发 ERR_HTTP_HEADERS_SENT
+    if (res.headersSent) return;
     const code = (e && e.statusCode) || 500;
     sendJSON(res, code, { ok: false, message: String(e && e.message || e) });
   }
