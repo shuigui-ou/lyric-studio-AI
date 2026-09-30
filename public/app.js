@@ -55,9 +55,10 @@
     const s = STYLES[currentStyle];
     return (s && s.name) ? { name: s.name, desc: s.desc || '' } : null;
   }
-  // 当前曲风 / 语种（写词时注入 AI 提示词）
+  // 当前曲风 / 语种 / 能量硬度（写词时注入 AI 提示词）
   function currentGenre() { const s = $('#ai-genre'); return (s && s.value) || ''; }
   function currentLang() { const s = $('#ai-lang'); return (s && s.value) || 'zh'; }
+  function currentEnergy() { const s = $('#ai-energy'); return (s && s.value) || ''; }
   // 是否中文系语种（中文或中英双语）：决定前端是否显示十三辙韵脚
   function isHanLang() { const l = currentLang(); return l === 'zh' || l === 'bilingual'; }
   // 从服务端拉取词人列表（内置库 + 自定义库），动态填充风格下拉
@@ -189,7 +190,7 @@
   function newDoc() {
     return {
       id: null,
-      meta: { title: '', author: '', key: '', bpm: '', genre: '', mood: '', theme: '', language: 'zh', brief: { story: '', must: '', avoid: '', tone: '' }, singer: { gender: '', register: '', timbre: '', name: '' } },
+      meta: { title: '', author: '', key: '', bpm: '', genre: '', mood: '', theme: '', language: 'zh', energy: '', brief: { story: '', must: '', avoid: '', tone: '' }, singer: { gender: '', register: '', timbre: '', name: '' } },
       blocks: [{ id: uid(), type: 'verse', name: '', lines: [{ text: '', note: '' }] }],
     };
   }
@@ -679,7 +680,7 @@
   let CURRENT_PINNED = []; // 本次 AI 调用携带的锁定金句
   function aiBody(context, instruction, sectionType, mode) {
     const m = state.meta || {};
-    return { context, instruction, provider: currentProvider, style: stylePayload(), singer: singerPayload(), sectionType: sectionType || '', mode: mode || '', pinned: CURRENT_PINNED, genre: currentGenre(), language: currentLang(), bpm: m.bpm || '', key: m.key || '', meter: m.meter || '', brief: briefOf() };
+    return { context, instruction, provider: currentProvider, style: stylePayload(), singer: singerPayload(), sectionType: sectionType || '', mode: mode || '', pinned: CURRENT_PINNED, genre: currentGenre(), language: currentLang(), energy: currentEnergy(), bpm: m.bpm || '', key: m.key || '', meter: m.meter || '', brief: briefOf() };
   }
 
   async function aiContinue(blockId, btn) {
@@ -2127,6 +2128,7 @@
     if (platform === 'udio') parts.push('Mandarin vocals'); // Udio 风格框加「中文演唱」标签
     if (s.timbre) parts.push(s.timbre);
     if (state.meta.mood) parts.push(state.meta.mood);
+    if (state.meta.energy) parts.push(state.meta.energy);
     if (state.meta.bpm) parts.push(state.meta.bpm + ' BPM');
     if (state.meta.key) parts.push('key ' + state.meta.key);
     return parts.join(', ');
@@ -2420,6 +2422,15 @@
         state.meta.language = langSel.value; scheduleSave();
         refreshInlineAll(); refreshAnalysisAll();
         toast('语种：' + (LANGS[langSel.value] || '中文'));
+      });
+    }
+    const energySel = $('#ai-energy');
+    if (energySel) {
+      energySel.value = state.meta.energy || '';
+      energySel.addEventListener('change', () => {
+        state.meta.energy = energySel.value; scheduleSave();
+        const L = { soft: '柔和 / 抒情', '': '标准', energetic: '有力', hard: '炸裂 / 硬核' };
+        toast('能量：' + (L[energySel.value] || '标准'));
       });
     }
 
