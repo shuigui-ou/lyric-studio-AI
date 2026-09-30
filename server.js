@@ -233,12 +233,12 @@ async function arkSuggest(prompt, model, cfg, sys, timeoutMs) {
 }
 
 async function handleAiSuggest(body) {
-  const { context = '', instruction = '', model = '', style = null, singer = null, provider = '', sectionType = '', mode = '', pinned = [], genre = '', language = 'zh', bpm = '', key = '', meter = '', brief = null } = body || {};
+  const { context = '', instruction = '', model = '', style = null, singer = null, provider = '', sectionType = '', mode = '', pinned = [], genre = '', language = 'zh', bpm = '', key = '', meter = '', energy = '', brief = null } = body || {};
   const cfg = loadArkConfig();
   const useProvider = provider || cfg.provider || (cfg.arkApiKey ? 'ark' : 'ollama');
   const sys = arkSysFor(language);
   const songMeta = { bpm: bpm || '', key: key || '', meter: meter || '' };
-  const prompt = buildPrompt(context, instruction, style, singer, sectionType, mode, pinned, genre, language, songMeta, brief);
+  const prompt = buildPrompt(context, instruction, style, singer, sectionType, mode, pinned, genre, language, songMeta, brief, energy);
 
   if (useProvider === 'ark') {
     if (!cfg.arkApiKey) {
@@ -433,8 +433,16 @@ const GENRE_NOTE = {
   ancient: '【曲风·古风】半文白词汇、古典意象，押韵考究、句式工整。',
   rock: '【曲风·摇滚】有力量与态度，短促有力句、呐喊式重复；押韵可更自由，重情绪爆发。',
 };
+// 能量 / 硬度定位：每首歌自己的选择，不是统一标准。
+// 默认「标准」(空) 不注入任何提示，保持现有软基线行为（老歌零变化）；
+// 只有用户显式选了 soft / energetic / hard 才注入对应指令，软歌能保持软、硬歌能拉硬。
+const ENERGY_NOTE = {
+  soft: '【能量定位·柔和】这首歌以温柔 / 叙述 / 抒情为底色：允许并善用留白、含蓄与意象铺陈，句长可舒缓，不必追求力量感与密度；软本身就是对的表达，不要强行加劲。',
+  energetic: '【能量定位·有力】这首歌需要明确的能量推进：副歌 / 爆发段用短促重拍句、动词有力、适当重复强化记忆点与情绪推力，避免全程温吞；叙述段仍可保留呼吸感，不必句句炸。',
+  hard: '【能量定位·炸裂】这首歌要强态度与冲击力：短句、重拍、呐喊式重复、强动词与态度表达，节奏密集，杜绝温吞与散文化长句；让能量从头到尾压住。',
+};
 
-function buildPrompt(context, instruction, style, singer, sectionType, mode, pinned, genre, language, songMeta, brief) {
+function buildPrompt(context, instruction, style, singer, sectionType, mode, pinned, genre, language, songMeta, brief, energy) {
   const lines = [
     '你是一位专业的华语流行歌歌词创作助手。',
     '请根据已有歌词的语气、意象与押韵风格，续写或改写。',
@@ -451,6 +459,9 @@ function buildPrompt(context, instruction, style, singer, sectionType, mode, pin
   // 曲风指令：说唱 / 民谣 / 古风 / 摇滚
   const genreNote = GENRE_NOTE[genre] || '';
   if (genreNote) lines.push(genreNote);
+  // 能量 / 硬度定位：每首歌自己的选择（默认「标准」空值不注入，保持现有软基线）
+  const energyNote = ENERGY_NOTE[energy] || '';
+  if (energyNote) lines.push(energyNote);
   // 段落类型语义：让主歌/副歌/桥段生成出不同性质的内容，而不是雷同
   if (sectionType) {
     const g = SECTION_GUIDE[sectionType] || '请按该段落在一首歌中的作用来写';
