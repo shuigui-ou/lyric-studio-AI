@@ -347,7 +347,7 @@ function buildRulesBlock(language, genre, songMeta) {
     out.push(`  · 每行字数 = 非标点字符数，推荐 ${r.line.recommendedChars} 字，严禁超过 ${r.line.maxChars} 字（否则难唱）。`);
   }
   out.push(`  · 整首模式每段 ${r.line.linesPerSection}；导出要求单行≤${r.line.suno.maxCharsPerLine}字、每段≤${r.line.suno.maxLinesPerSection}行、全曲约 ${r.line.suno.totalCharsRange[0]}-${r.line.suno.totalCharsRange[1]} 字。`);
-  out.push('  · 段落行数必须为偶数（4/6/8 行），严禁出现 5 行等奇数行——奇数行结构不闭合、不适合演唱，这是硬性约束。');
+  out.push('  · 段落行数必须为偶数、且主歌与副歌行数对称（同 4 行或同 8 行），严禁奇数行、严禁主 8/副 4 这类不对称组合——不对称会让 Suno/Udio 在段落过渡处错位、副歌歌词提前进入主歌。');
   // 气口与呼吸（可唱性硬约束）：从 rules.json.breath 注入，所有生成模式均生效
   if (r.breath) {
     out.push('三、气口与呼吸（可唱性硬约束，必须严格遵守）：');
@@ -358,6 +358,8 @@ function buildRulesBlock(language, genre, songMeta) {
     out.push('  · ' + r.breath.markConvention + '（曲风气口预算：' + JSON.stringify(r.breath.genreBudget || {}) + '）');
   }
   out.push('四、结构：必须沿用所选模板的段落顺序与性质，禁止自创结构或随意换辙。');
+  if (r.structure && r.structure.chorusRepeat) out.push('  · ' + r.structure.chorusRepeat);
+  if (r.structure && r.structure.symmetry) out.push('  · ' + r.structure.symmetry);
   // 五、曲风专项要求（下方 push 实际编号：rap→「五、说唱专项要求」，其它→「五、曲风要求」）
   if (genre === 'rap' && r.genres && r.genres.rap) {
     const g = r.genres.rap;
