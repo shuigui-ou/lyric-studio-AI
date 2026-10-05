@@ -1060,7 +1060,7 @@
       const langName = LANGS[currentLang()] || '华语';
       const genreName = currentGenre() ? '（' + (GENRES[currentGenre()] || '流行') + '）' : '';
       const briefPart = briefHint() ? briefHint() + '。' : '';
-      const instruction = `请创作一整首${langName}流行歌${genreName}，段落顺序与性质如下（共 ${order.length} 段）：${structText}。${themePart}${briefPart}段落行数严格按硬性规则：主歌与副歌必须等长（推荐各 4 行，需铺陈可各 8 行），全为偶数行、禁止奇数行；每行一句，押韵自然；副歌歌词只需写一遍（后续重复由音乐生成器循环）。${singerPart}${pinnedPart}段落标题可用【主歌】【副歌】【桥段】或 [Verse]/[Chorus]/[Bridge] 等，独占一行，只输出歌词，不要解释。`;
+      const instruction = `请创作一整首${langName}流行歌${genreName}，段落顺序与性质如下（共 ${order.length} 段）：${structText}。${themePart}${briefPart}段落行数严格按硬性规则：主歌与副歌必须等长（固定各 4 行，需铺陈可各 8 行，禁止 6 行），全为偶数行、禁止奇数行；每行一句，押韵自然；副歌歌词只需写一遍（后续重复由音乐生成器循环）。${singerPart}${pinnedPart}段落标题可用【主歌】【副歌】【桥段】或 [Verse]/[Chorus]/[Bridge] 等，独占一行，只输出歌词，不要解释。`;
       // 已有内容时确认覆盖
       if (state.blocks.some((b) => b.lines.some((l) => (l.text || '').trim()))) {
         if (!window.confirm('当前已有歌词，是否覆盖生成整首新歌？（取消则保留现有内容）')) return;
