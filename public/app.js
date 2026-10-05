@@ -503,16 +503,16 @@
     return wrap;
   }
 
-  // 段落太长实时提醒：Suno/Udio 每段建议 ≤8-10 行，否则易忽略或仓促
+  // 段落太长实时提醒：Suno/Udio 每段建议 ≤8 行，否则易忽略或仓促
   function updateBlockWarn(wrap, b) {
     const warn = wrap.querySelector('.block-warn');
     if (!warn) return;
     const n = b.lines.filter((x) => (x.text || '').trim()).length;
-    if (n > 10) {
+    if (n > 8) {
       warn.classList.remove('hidden');
       warn.innerHTML = '';
       const msg = el('span', 'bw-msg');
-      msg.textContent = `⚠ 此段共 ${n} 行，Suno / Udio 建议每段 ≤8–10 行（易忽略或仓促演唱）。`;
+      msg.textContent = `⚠ 此段共 ${n} 行，Suno / Udio 建议每段 ≤8 行（易忽略或仓促演唱）。`;
       const btn = el('button', 'bw-split', '一键拆分');
       btn.addEventListener('click', () => splitBlock(b.id));
       warn.append(msg, btn);
@@ -520,20 +520,20 @@
       warn.classList.add('hidden');
     }
   }
-  // 按每 10 行把一个超长段落拆成若干段（保类型，后续段插在原段之后）
+  // 按每 8 行把一个超长段落拆成若干段（保类型，后续段插在原段之后）
   function splitBlock(blockId) {
     const idx = state.blocks.findIndex((x) => x.id === blockId);
     if (idx < 0) return;
     const b = state.blocks[idx];
     const lines = b.lines.slice();
-    if (lines.length <= 10) return;
+    if (lines.length <= 8) return;
     const chunks = [];
-    for (let i = 0; i < lines.length; i += 10) chunks.push(lines.slice(i, i + 10));
+    for (let i = 0; i < lines.length; i += 8) chunks.push(lines.slice(i, i + 8));
     b.lines = chunks[0];
     const newBlocks = chunks.slice(1).map((c) => ({ id: uid(), type: b.type, name: '', lines: c }));
     state.blocks.splice(idx + 1, 0, ...newBlocks);
     renderAll(); scheduleSave();
-    toast('已按 10 行拆分：共 ' + chunks.length + ' 段', 'ok');
+    toast('已按 8 行拆分：共 ' + chunks.length + ' 段', 'ok');
   }
 
   function buildLineRow(b, idx) {
@@ -1060,7 +1060,7 @@
       const langName = LANGS[currentLang()] || '华语';
       const genreName = currentGenre() ? '（' + (GENRES[currentGenre()] || '流行') + '）' : '';
       const briefPart = briefHint() ? briefHint() + '。' : '';
-      const instruction = `请创作一整首${langName}流行歌${genreName}，段落顺序与性质如下（共 ${order.length} 段）：${structText}。${themePart}${briefPart}每个段落 4 行或 6 行（主歌可 8 行），必须为偶数行、禁止奇数行，每行一句，押韵自然。${singerPart}${pinnedPart}段落标题可用【主歌】【副歌】【桥段】或 [Verse]/[Chorus]/[Bridge] 等，独占一行，只输出歌词，不要解释。`;
+      const instruction = `请创作一整首${langName}流行歌${genreName}，段落顺序与性质如下（共 ${order.length} 段）：${structText}。${themePart}${briefPart}段落行数严格按硬性规则：主歌与副歌必须等长（推荐各 4 行，需铺陈可各 8 行），全为偶数行、禁止奇数行；每行一句，押韵自然；副歌歌词只需写一遍（后续重复由音乐生成器循环）。${singerPart}${pinnedPart}段落标题可用【主歌】【副歌】【桥段】或 [Verse]/[Chorus]/[Bridge] 等，独占一行，只输出歌词，不要解释。`;
       // 已有内容时确认覆盖
       if (state.blocks.some((b) => b.lines.some((l) => (l.text || '').trim()))) {
         if (!window.confirm('当前已有歌词，是否覆盖生成整首新歌？（取消则保留现有内容）')) return;
