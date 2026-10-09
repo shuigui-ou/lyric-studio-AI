@@ -657,6 +657,9 @@
       if (currentProvider === 'ark') {
         if (j.ark && j.ark.configured) { arkReady = true; dot.className = 'dot ok'; dot.title = 'AI: 火山方舟(' + (j.ark.model || 'doubao') + ')'; }
         else { arkReady = false; dot.className = 'dot err'; dot.title = 'AI: 火山未配置 Key（点击设置）'; }
+      } else if (currentProvider === 'openai') {
+        if (j.openai && j.openai.configured) { arkReady = true; dot.className = 'dot ok'; dot.title = 'AI: OpenAI 兼容(' + (j.openai.model || '未填模型名') + ')'; }
+        else { arkReady = false; dot.className = 'dot err'; dot.title = 'AI: OpenAI 兼容未配置（点击设置）'; }
       } else {
         if (j.ollama && j.ollama.ok) { dot.className = 'dot ok'; dot.title = 'AI: Ollama(' + ((j.ollama.models || [])[0] || 'local') + ')'; }
         else { dot.className = 'dot err'; dot.title = 'AI: Ollama 未连接'; }
@@ -2002,12 +2005,16 @@
       if ($('#set-ark-model')) $('#set-ark-model').value = j.arkModel || 'ark-code-latest';
       if ($('#set-ark-base')) $('#set-ark-base').value = j.arkBase || 'https://ark.cn-beijing.volces.com/api/coding/v3';
       if ($('#set-ollama-base')) $('#set-ollama-base').value = j.ollamaBase || 'http://127.0.0.1:11434';
+      if ($('#set-openai-key')) $('#set-openai-key').value = j.openaiApiKey || '';
+      if ($('#set-openai-model')) $('#set-openai-model').value = j.openaiModel || '';
+      if ($('#set-openai-base')) $('#set-openai-base').value = j.openaiBase || '';
       toggleProviderFields();
     } catch {}
   }
   function toggleProviderFields() {
     const p = $('#set-provider').value;
     $('#set-ark-fields').style.display = p === 'ark' ? '' : 'none';
+    $('#set-openai-fields').style.display = p === 'openai' ? '' : 'none';
     $('#set-ollama-fields').style.display = p === 'ollama' ? '' : 'none';
   }
   function openSettings() { $('#settings-modal').classList.remove('hidden'); loadSettings(); const m = $('#set-msg'); m.textContent = ''; m.className = 'set-msg'; }
@@ -2018,6 +2025,9 @@
       arkModel: $('#set-ark-model').value.trim(),
       arkBase: $('#set-ark-base').value.trim(),
       ollamaBase: $('#set-ollama-base').value.trim(),
+      openaiApiKey: $('#set-openai-key').value,
+      openaiModel: $('#set-openai-model').value.trim(),
+      openaiBase: $('#set-openai-base').value.trim(),
     };
     const m = $('#set-msg');
     try {
