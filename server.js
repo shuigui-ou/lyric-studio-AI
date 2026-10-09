@@ -65,6 +65,8 @@ function loadArkConfig() {
     openaiApiKey: process.env.OPENAI_API_KEY || file.openaiApiKey || '',
     openaiModel: file.openaiModel || OPENAI_MODEL_DEFAULT,
     openaiBase: file.openaiBase || process.env.OPENAI_BASE || OPENAI_BASE_DEFAULT,
+    profiles: file.profiles || {},
+    activeProfile: file.activeProfile || '',
   };
 }
 
@@ -1087,7 +1089,7 @@ const server = http.createServer(async (req, res) => {
         provider: cfg.provider || (cfg.arkApiKey ? 'ark' : 'ollama'),
         ark: { configured: !!cfg.arkApiKey, model: cfg.arkModel, base: cfg.arkBase },
         ollama: { ok: avail.ok, models: avail.models },
-        openai: { configured: !!(cfg.openaiBase && cfg.openaiApiKey), model: cfg.openaiModel, base: cfg.openaiBase },
+        openai: { configured: !!(cfg.openaiBase && cfg.openaiApiKey), model: cfg.openaiModel, base: cfg.openaiBase, activeProfile: cfg.activeProfile || '' },
       });
     }
     if (p === '/api/settings' && req.method === 'GET') {
@@ -1101,6 +1103,8 @@ const server = http.createServer(async (req, res) => {
         openaiModel: cfg.openaiModel,
         openaiBase: cfg.openaiBase,
         openaiConfigured: !!(cfg.openaiBase && cfg.openaiApiKey),
+        profiles: Object.keys(cfg.profiles || {}),
+        activeProfile: cfg.activeProfile || '',
       });
     }
     if (p === '/api/settings' && req.method === 'POST') {
@@ -1116,6 +1120,41 @@ const server = http.createServer(async (req, res) => {
       if (typeof body.openaiModel === 'string') file.openaiModel = body.openaiModel.trim();
       if (typeof body.openaiBase === 'string' && body.openaiBase.trim()) file.openaiBase = body.openaiBase.trim();
       if (typeof body.openaiApiKey === 'string' && body.openaiApiKey.trim()) file.openaiApiKey = body.openaiApiKey.trim();
+      // ---- 命名预设：多个 OpenAI 兼容端点（MiniMax / DeepSeek / OpenAI …）一键切换 ----
+      // 安全原则：预设的 key 只存服务端，GET 仅回传预设名，切换时浏览器只发预设名，
+      // 由服务端把该预设复制进活动 openai 配置——key 永不离开服务端。
+      // 保存为预设：把当前 openai 三件套存入 profiles[name]
+      if (typeof body.profileName === 'string' && body.profileName.trim()) {
+        const pn = body.profileName.trim();
+        file.profiles = file.profiles || {};
+        file.profiles[pn] = {
+          openaiApiKey: (typeof body.openaiApiKey === 'string' ? body.openaiApiKey.trim() : ''),
+          openaiModel: (typeof body.openaiModel === 'string' ? body.openaiModel.trim() : ''),
+          openaiBase: (typeof body.openaiBase === 'string' ? body.openaiBase.trim() : ''),
+        };
+        file.activeProfile = pn;
+        if (file.provider !== 'openai') file.provider = 'openai';
+      }
+      // 删除预设
+      if (typeof body.deleteProfile === 'string' && body.deleteProfile.trim() && file.profiles && file.profiles[body.deleteProfile.trim()]) {
+        const dn = body.deleteProfile.trim();
+        delete file.profiles[dn];
+        if (file.activeProfile === dn) {
+          file.activeProfile = '';
+          file.openaiApiKey = ''; file.openaiModel = ''; file.openaiBase = '';
+          if (file.provider === 'openai') file.provider = 'ark';
+        }
+      }
+      // 切换到某预设（一键）：服务端把该预设复制进活动 openai 配置
+      if (typeof body.activeProfile === 'string' && body.activeProfile.trim() && file.profiles && file.profiles[body.activeProfile.trim()]) {
+        const ap = body.activeProfile.trim();
+        const prof = file.profiles[ap];
+        file.openaiApiKey = prof.openaiApiKey || '';
+        file.openaiModel = prof.openaiModel || '';
+        file.openaiBase = prof.openaiBase || '';
+        file.activeProfile = ap;
+        if (file.provider !== 'openai') file.provider = 'openai';
+      }
       fs.writeFileSync(ARK_CONFIG_FILE, JSON.stringify(file, null, 2));
       return sendJSON(res, 200, { ok: true, arkConfigured: !!file.arkApiKey, provider: file.provider });
     }
