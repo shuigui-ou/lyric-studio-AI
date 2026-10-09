@@ -1033,7 +1033,7 @@
     // 弹窗：一次性生成一整首带结构的歌，之后用户在各正文框里逐句微调
     const body = $('#modal-body'); $('#modal-title').textContent = 'AI 写整首歌';
     body.innerHTML = '';
-    const tip = el('div', 'sel-style'); tip.textContent = 'AI 会生成一整首带段落结构的歌（主歌 / 副歌 / 桥段…），生成后你在各正文框里逐句微调即可。';
+    const tip = el('div', 'sel-style'); tip.textContent = 'AI 会生成一整首全新的带段落结构的歌（主歌 / 副歌 / 桥段…），无需先清空当前歌词——生成会直接覆盖成新一首。生成后你在各正文框里逐句微调即可。';
     const rowStruct = el('label', 'sel-label'); rowStruct.textContent = '歌曲结构';
     const selStruct = el('select', 'sel-type');
     Object.keys(SONG_STRUCTURES).forEach((k) => { const o = el('option'); o.value = k; o.textContent = SONG_STRUCTURES[k].label; selStruct.appendChild(o); });
@@ -1052,7 +1052,11 @@
     bGo.addEventListener('click', async () => {
       const theme = taTheme.value.trim();
       const order = (SONG_STRUCTURES[selStruct.value] || SONG_STRUCTURES.standard).order;
-      const ctx = state.blocks.map((b) => b.lines.map((l) => l.text).join('\n')).filter(Boolean).join('\n\n');
+      // 写整首 = 全新创作：刻意不把编辑器里已有的歌词当作 ctx 传入。
+      // 旧代码会把上一首整首歌词注入成提示词里的【已有歌词】，与「请创作一整首」自相矛盾，
+      // 既污染新歌、又让推理模型的长 prompt 挤爆 token 而吐空内容（表现就是「写两首后停」）。
+      // 锁定金句已通过 pinned 单独带入，无需依赖 ctx。
+      const ctx = '';
       const singer = singerHint();
       const structText = order.map((lab, i) => `${i + 1}) ${lab}（${SECTION_NATURE[lab] || ''}）`).join('；');
       const themePart = theme ? `主题 / 情绪：「${theme}」。` : '请自行设定一个完整统一的主题与情绪。';
