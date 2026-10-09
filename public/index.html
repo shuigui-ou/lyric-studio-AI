@@ -136,6 +136,7 @@
         <label class="set-row">提供方
           <select id="set-provider">
             <option value="ark">火山方舟（Volcengine Ark）</option>
+            <option value="openai">OpenAI 兼容（MiniMax / DeepSeek / OpenAI …）</option>
             <option value="ollama">本机 Ollama</option>
           </select>
         </label>
@@ -149,6 +150,18 @@
           </label>
           <label class="set-row">Base URL
             <input id="set-ark-base" placeholder="https://ark.cn-beijing.volces.com/api/coding/v3" />
+          </label>
+        </div>
+        <div id="set-openai-fields">
+          <p class="set-tip">通用 OpenAI 兼容接口：任意 OpenAI 兼容的模型服务（MiniMax / DeepSeek / OpenAI / Grok …）都填这一栏，<b>无需改代码</b>。填好 Base URL + API Key + 模型名即可。<br/>示例（MiniMax M3）：Base URL <code>https://api.minimax.io/v1</code>、模型名 <code>MiniMax-M3</code>（1M 上下文，标准 Chat Completions，正文不会被思维链挤光）；Key 在对应平台获取。</p>
+          <label class="set-row">API Key
+            <input id="set-openai-key" type="password" placeholder="对应平台的 API Key" autocomplete="off" />
+          </label>
+          <label class="set-row">模型名
+            <input id="set-openai-model" placeholder="如 MiniMax-M3 / deepseek-chat / gpt-4o" />
+          </label>
+          <label class="set-row">Base URL
+            <input id="set-openai-base" placeholder="如 https://api.minimax.io/v1" />
           </label>
         </div>
         <div id="set-ollama-fields">
