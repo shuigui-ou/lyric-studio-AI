@@ -154,6 +154,13 @@
         </div>
         <div id="set-openai-fields">
           <p class="set-tip">通用 OpenAI 兼容接口：任意 OpenAI 兼容的模型服务（MiniMax / DeepSeek / OpenAI / Grok …）都填这一栏，<b>无需改代码</b>。填好 Base URL + API Key + 模型名即可。<br/>示例（MiniMax M3）：Base URL <code>https://api.minimax.io/v1</code>、模型名 <code>MiniMax-M3</code>（1M 上下文，标准 Chat Completions，正文不会被思维链挤光）；Key 在对应平台获取。</p>
+          <label class="set-row">预设（一键切换多个端点）
+            <select id="set-profile"><option value="">（手动填写 / 无预设）</option></select>
+          </label>
+          <div class="set-profile-acts">
+            <button id="set-save-profile" type="button" class="ghost sm">保存当前为预设</button>
+            <button id="set-del-profile" type="button" class="ghost sm">删除当前预设</button>
+          </div>
           <label class="set-row">API Key
             <input id="set-openai-key" type="password" placeholder="对应平台的 API Key" autocomplete="off" />
           </label>
