@@ -658,7 +658,7 @@
         if (j.ark && j.ark.configured) { arkReady = true; dot.className = 'dot ok'; dot.title = 'AI: 火山方舟(' + (j.ark.model || 'doubao') + ')'; }
         else { arkReady = false; dot.className = 'dot err'; dot.title = 'AI: 火山未配置 Key（点击设置）'; }
       } else if (currentProvider === 'openai') {
-        if (j.openai && j.openai.configured) { arkReady = true; dot.className = 'dot ok'; dot.title = 'AI: OpenAI 兼容(' + (j.openai.model || '未填模型名') + ')'; }
+        if (j.openai && j.openai.configured) { arkReady = true; dot.className = 'dot ok'; dot.title = 'AI: OpenAI 兼容(' + (j.openai.model || '未填模型名') + (j.openai.activeProfile ? ' · ' + j.openai.activeProfile : '') + ')'; }
         else { arkReady = false; dot.className = 'dot err'; dot.title = 'AI: OpenAI 兼容未配置（点击设置）'; }
       } else {
         if (j.ollama && j.ollama.ok) { dot.className = 'dot ok'; dot.title = 'AI: Ollama(' + ((j.ollama.models || [])[0] || 'local') + ')'; }
@@ -2008,6 +2008,12 @@
       if ($('#set-openai-key')) $('#set-openai-key').value = j.openaiApiKey || '';
       if ($('#set-openai-model')) $('#set-openai-model').value = j.openaiModel || '';
       if ($('#set-openai-base')) $('#set-openai-base').value = j.openaiBase || '';
+      const pf = $('#set-profile');
+      if (pf) {
+        pf.innerHTML = '<option value="">（手动填写 / 无预设）</option>';
+        (j.profiles || []).forEach((n) => { const o = document.createElement('option'); o.value = n; o.textContent = n + (j.activeProfile === n ? ' ✓' : ''); pf.appendChild(o); });
+        pf.value = j.activeProfile || '';
+      }
       toggleProviderFields();
     } catch {}
   }
@@ -2036,6 +2042,49 @@
       if (j.ok) { currentProvider = payload.provider; m.textContent = '已保存'; m.className = 'set-msg ok'; toast('AI 设置已保存', 'ok'); checkAiStatus(); setTimeout(() => $('#settings-modal').classList.add('hidden'), 600); }
       else { m.textContent = j.message || '保存失败'; m.className = 'set-msg err'; }
     } catch (e) { m.textContent = '保存失败：' + e.message; m.className = 'set-msg err'; }
+  }
+  // 把当前 OpenAI 三件套存为一个命名预设
+  async function saveAsProfile() {
+    const name = (window.prompt('给当前 OpenAI 配置起个预设名（如 MiniMax M3 / DeepSeek）：', $('#set-openai-model').value || '我的预设') || '').trim();
+    if (!name) return;
+    const payload = {
+      provider: 'openai',
+      profileName: name,
+      openaiApiKey: $('#set-openai-key').value,
+      openaiModel: $('#set-openai-model').value.trim(),
+      openaiBase: $('#set-openai-base').value.trim(),
+    };
+    try {
+      const r = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      const j = await r.json();
+      if (j.ok) { toast('已保存预设：' + name, 'ok'); await loadSettings(); checkAiStatus(); }
+      else { window.alert('保存预设失败：' + (j.message || '未知错误')); }
+    } catch (e) { window.alert('保存预设失败：' + e.message); }
+  }
+  // 一键切换到某预设：浏览器只发预设名，服务端把该预设复制进活动配置（key 不出服务端）
+  async function switchProfile() {
+    const name = $('#set-profile').value;
+    if (!name) return; // 选了「手动填写」则不切换
+    const payload = { provider: 'openai', activeProfile: name };
+    try {
+      const r = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      const j = await r.json();
+      if (j.ok) { currentProvider = 'openai'; toast('已切换到预设：' + name, 'ok'); await loadSettings(); checkAiStatus(); setTimeout(() => $('#settings-modal').classList.add('hidden'), 500); }
+      else { window.alert('切换失败：' + (j.message || '未知错误')); }
+    } catch (e) { window.alert('切换失败：' + e.message); }
+  }
+  // 删除当前选中的预设
+  async function deleteProfile() {
+    const name = $('#set-profile').value;
+    if (!name) { window.alert('当前没有选中预设'); return; }
+    if (!window.confirm('确认删除预设「' + name + '」？')) return;
+    const payload = { deleteProfile: name };
+    try {
+      const r = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      const j = await r.json();
+      if (j.ok) { toast('已删除预设：' + name, 'ok'); await loadSettings(); checkAiStatus(); }
+      else { window.alert('删除失败：' + (j.message || '未知错误')); }
+    } catch (e) { window.alert('删除失败：' + e.message); }
   }
 
   // ---------- 存档 ----------
@@ -2365,6 +2414,9 @@
     $('#settings-modal').addEventListener('click', (e) => { if (e.target.id === 'settings-modal') $('#settings-modal').classList.add('hidden'); });
     $('#set-provider').addEventListener('change', toggleProviderFields);
     $('#set-save').addEventListener('click', saveSettings);
+    $('#set-save-profile').addEventListener('click', saveAsProfile);
+    $('#set-del-profile').addEventListener('click', deleteProfile);
+    $('#set-profile').addEventListener('change', switchProfile);
     $('#set-cancel').addEventListener('click', () => $('#settings-modal').classList.add('hidden'));
 
     $('#meta-title').addEventListener('input', (e) => { state.meta.title = e.target.value; scheduleSave(); });
