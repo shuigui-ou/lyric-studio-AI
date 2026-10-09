@@ -2008,6 +2008,8 @@
       if ($('#set-openai-key')) $('#set-openai-key').value = j.openaiApiKey || '';
       if ($('#set-openai-model')) $('#set-openai-model').value = j.openaiModel || '';
       if ($('#set-openai-base')) $('#set-openai-base').value = j.openaiBase || '';
+      const arkStatus = $('#ark-key-status'); if (arkStatus) { arkStatus.textContent = j.arkKeyMask ? ('已配置密钥 ' + j.arkKeyMask + '（留空=保持不变）') : '未配置密钥'; arkStatus.classList.toggle('configured', !!j.arkKeyMask); }
+      const oaStatus = $('#openai-key-status'); if (oaStatus) { oaStatus.textContent = j.openaiKeyMask ? ('已配置密钥 ' + j.openaiKeyMask + '（留空=保持不变）') : '未配置密钥'; oaStatus.classList.toggle('configured', !!j.openaiKeyMask); }
       const pf = $('#set-profile');
       if (pf) {
         pf.innerHTML = '<option value="">（手动填写 / 无预设）</option>';
@@ -2039,7 +2041,7 @@
     try {
       const r = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
       const j = await r.json();
-      if (j.ok) { currentProvider = payload.provider; m.textContent = '已保存'; m.className = 'set-msg ok'; toast('AI 设置已保存', 'ok'); checkAiStatus(); setTimeout(() => $('#settings-modal').classList.add('hidden'), 600); }
+      if (j.ok) { currentProvider = payload.provider; m.textContent = '已保存'; m.className = 'set-msg ok'; toast('AI 设置已保存', 'ok'); await loadSettings(); checkAiStatus(); setTimeout(() => $('#settings-modal').classList.add('hidden'), 600); }
       else { m.textContent = j.message || '保存失败'; m.className = 'set-msg err'; }
     } catch (e) { m.textContent = '保存失败：' + e.message; m.className = 'set-msg err'; }
   }
