@@ -12,6 +12,10 @@ const OLLAMA_BASE = process.env.OLLAMA_BASE || 'http://127.0.0.1:11434';
 const ARK_BASE_DEFAULT = 'https://ark.cn-beijing.volces.com/api/coding/v3'; // 火山方舟 Coding Plan 专用端点
 const ARK_CONFIG_FILE = path.join(DATA, 'ark-config.json');
 const ARK_MODEL_DEFAULT = process.env.ARK_MODEL || 'ark-code-latest'; // Coding Plan Auto 调度模型
+// 通用 OpenAI 兼容 Provider：任意 OpenAI 兼容端点（MiniMax / DeepSeek / OpenAI / Grok …）都走这一条，
+// 不再为每家厂商单独写分支。用户在「⚙ 设置」里填 Base URL + API Key + 模型名即可，无需改代码。
+const OPENAI_BASE_DEFAULT = process.env.OPENAI_BASE || '';
+const OPENAI_MODEL_DEFAULT = process.env.OPENAI_MODEL || '';
 // 系统提示随「语种」切换：中文用华语创作助手，其他语种用对应语言的专业作詞家系统提示。
 // 注意：ark-code-latest 是推理模型，系统提示语言只作引导，真正的创作语言由 buildPrompt 的【创作语种】指令决定。
 function arkSysFor(language) {
@@ -58,6 +62,9 @@ function loadArkConfig() {
     arkModel: file.arkModel || ARK_MODEL_DEFAULT,
     arkBase: file.arkBase || process.env.ARK_BASE || ARK_BASE_DEFAULT,
     ollamaBase: file.ollamaBase || OLLAMA_BASE,
+    openaiApiKey: process.env.OPENAI_API_KEY || file.openaiApiKey || '',
+    openaiModel: file.openaiModel || OPENAI_MODEL_DEFAULT,
+    openaiBase: file.openaiBase || process.env.OPENAI_BASE || OPENAI_BASE_DEFAULT,
   };
 }
 
@@ -232,6 +239,83 @@ async function arkSuggest(prompt, model, cfg, sys, timeoutMs) {
   return last || { ok: false, code: 'ark_empty', message: '火山方舟返回内容为空' };
 }
 
+async function openaiCallOnce(prompt, model, cfg, sys, timeoutMs) {
+  const TIMEOUT = Math.min(timeoutMs || 180000, ARK_TIMEOUT_CEILING);
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), TIMEOUT);
+  const _t0 = Date.now();
+  const _sz = 'promptLen=' + String(prompt || '').length + ' sysLen=' + String(sys || '').length + ' timeout=' + TIMEOUT;
+  let r;
+  try {
+    r = await fetch(`${cfg.openaiBase}/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + cfg.openaiApiKey },
+      body: JSON.stringify({
+        model,
+        messages: [{ role: 'system', content: sys || arkSysFor('zh') }, { role: 'user', content: prompt }],
+        temperature: 0.9,
+        max_tokens: 8192,
+      }),
+      signal: ctrl.signal,
+    });
+  } catch (e) {
+    clearTimeout(timer);
+    console.log('[openai] 失败 ' + model + ' ' + _sz + ' ms=' + (Date.now() - _t0) + ' ' + e.name);
+    const timedOut = e.name === 'AbortError' || /abort/i.test(e.message || '');
+    if (timedOut) {
+      return { ok: false, code: 'openai_timeout',
+        message: 'AI 生成较慢，超出了 ' + Math.round(TIMEOUT / 1000) + ' 秒的限制，本次未出结果。请再试一次；若反复失败，可点右上角「⚙ 设置」切换 Provider。' };
+    }
+    const isFetchFail = /fetch failed/i.test(e.message || '');
+    return { ok: false, code: 'openai_network',
+      message: isFetchFail ? '与 OpenAI 兼容端点的连接中断（可能耗时过长）。请再试一次。'
+                           : '调用 OpenAI 兼容端点失败：' + e.message };
+  }
+  clearTimeout(timer);
+  console.log('[openai] 返回 ' + model + ' ' + _sz + ' ms=' + (Date.now() - _t0));
+  if (!r.ok) {
+    let detail = `OpenAI 兼容端点返回 ${r.status}`;
+    try { const ej = await r.json(); if (ej && ej.error && ej.error.message) detail = ej.error.message; } catch {}
+    const code = r.status === 401 ? 'openai_auth' : (r.status === 404 || r.status === 400) ? 'openai_model' : 'openai_error';
+    return { ok: false, code, message: detail };
+  }
+  const j = await r.json();
+  const msg = (j.choices && j.choices[0] && j.choices[0].message) || {};
+  // 标准 Chat Completions：正文在 content。绝不使用任何 reasoning / 思维链字段兜底。
+  const text = (msg.content || '').trim();
+  if (!text) return { ok: false, code: 'openai_empty', message: '模型返回内容为空，请重试' };
+  return { ok: true, model, text, provider: 'openai' };
+}
+
+// 偶发空内容自动重试（最多 3 次，指数退避 0.7s / 1.4s）。鉴权/模型/网络错误不重试，直接上抛。
+async function openaiSuggest(prompt, model, cfg, sys, timeoutMs) {
+  const MAX_ATTEMPTS = 3;
+  let last = null;
+  let retriedTimeout = false;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    const res = await openaiCallOnce(prompt, model, cfg, sys, timeoutMs);
+    if (res.ok) return res;
+    if (res.code === 'openai_timeout' && !retriedTimeout) {
+      retriedTimeout = true;
+      const t2 = Math.min(60000, Math.max(30000, Math.round((timeoutMs || 180000) * 0.3)));
+      console.log('[openai] 首次超时，短预算重试一次（' + t2 + 'ms）');
+      const res2 = await openaiCallOnce(prompt, model, cfg, sys, t2);
+      if (res2.ok) return res2;
+      if (res2.code === 'openai_timeout') {
+        return { ok: false, code: 'openai_timeout',
+          message: 'AI 生成较慢，两次尝试（' + Math.round((timeoutMs || 180000) / 1000) + 's + ' + Math.round(t2 / 1000) + 's）都没出结果。请再试一次；若反复失败，可点右上角「⚙ 设置」切换 Provider。' };
+      }
+      if (res2.code !== 'openai_empty') return res2;
+      last = res2;
+      continue;
+    }
+    if (res.code !== 'openai_empty') return res; // 非"空内容"错误不重试
+    last = res;
+    if (attempt < MAX_ATTEMPTS) await sleep(700 * attempt);
+  }
+  return last || { ok: false, code: 'openai_empty', message: '模型返回内容为空' };
+}
+
 async function handleAiSuggest(body) {
   const { context = '', instruction = '', model = '', style = null, singer = null, provider = '', sectionType = '', mode = '', pinned = [], genre = '', language = 'zh', bpm = '', key = '', meter = '', energy = '', brief = null } = body || {};
   const cfg = loadArkConfig();
@@ -251,6 +335,20 @@ async function handleAiSuggest(body) {
     // 另两条耗时长的路径（蒸馏 / 命名）已经各自传了 300000，写词路径此前漏了。
     const arkTimeout = mode === 'song' ? 300000 : 180000;
     return await arkSuggest(prompt, useModel, cfg, sys, arkTimeout);
+  }
+
+  if (useProvider === 'openai') {
+    if (!cfg.openaiBase || !cfg.openaiApiKey) {
+      return { ok: false, code: 'openai_no_key',
+        message: '未配置 OpenAI 兼容端点。请点右上角「⚙ 设置」填写 Base URL 与 API Key（适用于 MiniMax / DeepSeek / OpenAI 等）。' };
+    }
+    const useModel = model || cfg.openaiModel;
+    if (!useModel) {
+      return { ok: false, code: 'openai_no_model',
+        message: '未填写模型名。请在「⚙ 设置」的 OpenAI 兼容栏填写模型名（如 MiniMax-M3）。' };
+    }
+    const oaTimeout = mode === 'song' ? 300000 : 180000;
+    return await openaiSuggest(prompt, useModel, cfg, sys, oaTimeout);
   }
 
   // Ollama
@@ -989,6 +1087,7 @@ const server = http.createServer(async (req, res) => {
         provider: cfg.provider || (cfg.arkApiKey ? 'ark' : 'ollama'),
         ark: { configured: !!cfg.arkApiKey, model: cfg.arkModel, base: cfg.arkBase },
         ollama: { ok: avail.ok, models: avail.models },
+        openai: { configured: !!(cfg.openaiBase && cfg.openaiApiKey), model: cfg.openaiModel, base: cfg.openaiBase },
       });
     }
     if (p === '/api/settings' && req.method === 'GET') {
@@ -999,6 +1098,9 @@ const server = http.createServer(async (req, res) => {
         arkBase: cfg.arkBase,
         arkConfigured: !!cfg.arkApiKey,
         ollamaBase: cfg.ollamaBase,
+        openaiModel: cfg.openaiModel,
+        openaiBase: cfg.openaiBase,
+        openaiConfigured: !!(cfg.openaiBase && cfg.openaiApiKey),
       });
     }
     if (p === '/api/settings' && req.method === 'POST') {
@@ -1011,6 +1113,9 @@ const server = http.createServer(async (req, res) => {
       if (typeof body.arkBase === 'string' && body.arkBase.trim()) file.arkBase = body.arkBase.trim();
       if (typeof body.ollamaBase === 'string' && body.ollamaBase.trim()) file.ollamaBase = body.ollamaBase.trim();
       if (typeof body.arkApiKey === 'string' && body.arkApiKey.trim()) file.arkApiKey = body.arkApiKey.trim();
+      if (typeof body.openaiModel === 'string') file.openaiModel = body.openaiModel.trim();
+      if (typeof body.openaiBase === 'string' && body.openaiBase.trim()) file.openaiBase = body.openaiBase.trim();
+      if (typeof body.openaiApiKey === 'string' && body.openaiApiKey.trim()) file.openaiApiKey = body.openaiApiKey.trim();
       fs.writeFileSync(ARK_CONFIG_FILE, JSON.stringify(file, null, 2));
       return sendJSON(res, 200, { ok: true, arkConfigured: !!file.arkApiKey, provider: file.provider });
     }
@@ -1152,6 +1257,9 @@ server.listen(PORT, () => {
   const cfg = loadArkConfig();
   console.log(`lyric-studio 已启动: http://localhost:${PORT}`);
   console.log(`词稿存档目录: ${DATA}`);
-  console.log(`默认 AI 提供方: ${cfg.provider}${cfg.provider === 'ark' ? (cfg.arkApiKey ? '（已配置 Key）' : '（未配置 Key，请在设置中填写）') : '（Ollama: ' + cfg.ollamaBase + '）'}`);
+  const providerNote = cfg.provider === 'ark' ? (cfg.arkApiKey ? '（已配置 Key）' : '（未配置 Key，请在设置中填写）')
+    : cfg.provider === 'openai' ? (cfg.openaiBase && cfg.openaiApiKey ? '（已配置端点）' : '（未配置，请在设置中填写）')
+    : '（Ollama: ' + cfg.ollamaBase + '）';
+  console.log(`默认 AI 提供方: ${cfg.provider}${providerNote}`);
   scheduleCollect();  // 启动定时采集（只刷新素材；「切」按需触发，不在此盲跑）
 });
