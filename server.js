@@ -1094,15 +1094,19 @@ const server = http.createServer(async (req, res) => {
     }
     if (p === '/api/settings' && req.method === 'GET') {
       const cfg = loadArkConfig();
+      // 密钥仅回传「末 4 位遮罩」，用于让用户在 UI 上确认「已保存」——绝不全量回传。
+      const mask = (k) => (k && typeof k === 'string' && k.length >= 4 ? '••••' + k.slice(-4) : (k ? '••••' : ''));
       return sendJSON(res, 200, {
         provider: cfg.provider,
         arkModel: cfg.arkModel,
         arkBase: cfg.arkBase,
         arkConfigured: !!cfg.arkApiKey,
+        arkKeyMask: mask(cfg.arkApiKey),
         ollamaBase: cfg.ollamaBase,
         openaiModel: cfg.openaiModel,
         openaiBase: cfg.openaiBase,
         openaiConfigured: !!(cfg.openaiBase && cfg.openaiApiKey),
+        openaiKeyMask: mask(cfg.openaiApiKey),
         profiles: Object.keys(cfg.profiles || {}),
         activeProfile: cfg.activeProfile || '',
       });
@@ -1113,11 +1117,11 @@ const server = http.createServer(async (req, res) => {
       let file = {};
       try { file = JSON.parse(fs.readFileSync(ARK_CONFIG_FILE, 'utf8')); } catch {}
       if (body.provider) file.provider = body.provider;
-      if (typeof body.arkModel === 'string') file.arkModel = body.arkModel.trim();
+      if (typeof body.arkModel === 'string' && body.arkModel.trim()) file.arkModel = body.arkModel.trim();
       if (typeof body.arkBase === 'string' && body.arkBase.trim()) file.arkBase = body.arkBase.trim();
       if (typeof body.ollamaBase === 'string' && body.ollamaBase.trim()) file.ollamaBase = body.ollamaBase.trim();
       if (typeof body.arkApiKey === 'string' && body.arkApiKey.trim()) file.arkApiKey = body.arkApiKey.trim();
-      if (typeof body.openaiModel === 'string') file.openaiModel = body.openaiModel.trim();
+      if (typeof body.openaiModel === 'string' && body.openaiModel.trim()) file.openaiModel = body.openaiModel.trim();
       if (typeof body.openaiBase === 'string' && body.openaiBase.trim()) file.openaiBase = body.openaiBase.trim();
       if (typeof body.openaiApiKey === 'string' && body.openaiApiKey.trim()) file.openaiApiKey = body.openaiApiKey.trim();
       // ---- 命名预设：多个 OpenAI 兼容端点（MiniMax / DeepSeek / OpenAI …）一键切换 ----
