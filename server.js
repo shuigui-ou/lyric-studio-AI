@@ -193,8 +193,15 @@ async function arkCallOnce(prompt, model, cfg, sys, timeoutMs) {
   if (!r.ok) {
     let detail = `火山方舟返回 ${r.status}`;
     try { const ej = await r.json(); if (ej && ej.error && ej.error.message) detail = ej.error.message; } catch {}
-    const code = r.status === 401 ? 'ark_auth' : (r.status === 404 || r.status === 400) ? 'ark_model' : 'ark_error';
-    return { ok: false, code, message: detail };
+    let code = r.status === 401 ? 'ark_auth' : (r.status === 404 || r.status === 400) ? 'ark_model' : 'ark_error';
+    let message = detail;
+    // 限频（429）：这是「写两首后停」最常见的真实成因——连续重请求把端点额度打满。
+    // 单独识别并给出可操作提示，避免用户误以为程序坏了。
+    if (r.status === 429) {
+      code = 'ark_ratelimit';
+      message = '请求过于频繁，火山方舟限频了（HTTP 429）。请等待约 30–60 秒后再试；若频繁触发，可在 ⚙ 设置 切换 Provider 或模型（例如改用 Ollama 本地模型）。';
+    }
+    return { ok: false, code, message };
   }
   const j = await r.json();
   const msg = (j.choices && j.choices[0] && j.choices[0].message) || {};
@@ -278,8 +285,14 @@ async function openaiCallOnce(prompt, model, cfg, sys, timeoutMs) {
   if (!r.ok) {
     let detail = `OpenAI 兼容端点返回 ${r.status}`;
     try { const ej = await r.json(); if (ej && ej.error && ej.error.message) detail = ej.error.message; } catch {}
-    const code = r.status === 401 ? 'openai_auth' : (r.status === 404 || r.status === 400) ? 'openai_model' : 'openai_error';
-    return { ok: false, code, message: detail };
+    let code = r.status === 401 ? 'openai_auth' : (r.status === 404 || r.status === 400) ? 'openai_model' : 'openai_error';
+    let message = detail;
+    // 限频（429）：同 Ark，连续重请求打满端点额度，是「写两首后停」的常见成因。
+    if (r.status === 429) {
+      code = 'openai_ratelimit';
+      message = '请求过于频繁，该端点限频了（HTTP 429）。请等待约 30–60 秒后再试；若频繁触发，可在 ⚙ 设置 切换 Provider 或模型。';
+    }
+    return { ok: false, code, message };
   }
   const j = await r.json();
   const msg = (j.choices && j.choices[0] && j.choices[0].message) || {};
