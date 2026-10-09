@@ -3,5 +3,8 @@
   "arkModel": "ark-code-latest",
   "arkBase": "https://ark.cn-beijing.volces.com/api/coding/v3",
   "ollamaBase": "http://127.0.0.1:11434",
-  "arkApiKey": "YOUR_ARK_API_KEY_HERE"
+  "arkApiKey": "YOUR_ARK_API_KEY_HERE",
+  "openaiApiKey": "",
+  "openaiModel": "",
+  "openaiBase": ""
 }
