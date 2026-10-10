@@ -1298,7 +1298,13 @@ const server = http.createServer(async (req, res) => {
       return res.end('404 Not Found');
     }
     const ext = path.extname(fp);
-    res.writeHead(200, { 'Content-Type': MIME[ext] || 'application/octet-stream' });
+    // 关键：禁止浏览器缓存本地资源（app.js / index.html / style.css），避免「改了代码/设置却不生效」——
+    // 本项目反复出现旧 node 进程常驻 + 浏览器缓存旧 app.js 导致 provider 切不动、功能不更新。
+    const noCache = (ext === '.html' || ext === '.js' || ext === '.css');
+    res.writeHead(200, {
+      'Content-Type': MIME[ext] || 'application/octet-stream',
+      ...(noCache ? { 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache', 'Expires': '0' } : {}),
+    });
     fs.createReadStream(fp).pipe(res);
   } catch (e) {
     // readBody 可能已直接写出 413 响应，此处若再写一次会触发 ERR_HTTP_HEADERS_SENT
